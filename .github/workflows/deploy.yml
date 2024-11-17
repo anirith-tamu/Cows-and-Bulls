@@ -1,0 +1,19 @@
+name: deploy ansible
+
+on:      
+  push:
+    paths-ignore:
+      - 'server/**'
+      - '.github/workflows/**'
+
+  workflow_run:
+    workflows: ["GitHub Actions Demo", "Node.js server image"]
+    types:
+      -completed
+
+jobs:
+  deployAnsible:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v1
+    - uses: ./.github/workflows/ansible
