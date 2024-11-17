@@ -1,0 +1,209 @@
+name: Pipeline
+on: 
+  push:
+    paths-ignore:
+      - 'p2.yml'
+
+jobs:
+  
+  Audit: 
+    name: npm audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: install dependencies
+        run: npm ci
+        
+      - name: delete audit folder 
+        run: rm -rf audit
+      
+      - name: Run audit
+        uses: tangro/actions-audit@v1.1.44
+        with:
+          post-comment: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.TOKEN }}
+          GITHUB_CONTEXT: ${{ toJson(github) }}
+           
+      - name: cheecking audit folder
+        run: ls audit/ 
+        
+      - name: Commit Audit output
+        run: |
+          git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          # git add --all
+          # git commit -m "Added Audit files"
+          git diff-index --quiet HEAD || (git commit -a -m'[bot] update files' --allow-empty && git push -f)
+          
+      - name: Push Audit output changes
+        uses: ad-m/github-push-action@master
+        with:
+          github_token: ${{ secrets.TOKEN }}
+          branch: ${{ github.ref }}
+          
+  build1: 
+    name: Build frontend
+    needs: Audit
+      
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - uses: actions/setup-node@v3
+    
+    - name: Installing required dependencies
+      run: npm install
+      
+    - name: Making production build
+      run: npm run build
+          
+    - name: List files in the repository
+      run: |
+          ls ${{ github.workspace }}
+          
+  build2 :
+    name: Build Backend
+    needs: Audit
+    defaults:
+     run:
+      working-directory: ./server  
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - uses: actions/setup-node@v3
+    
+    - name: Installing required dependencies
+      run: npm ci   
+      
+    - name: List files in the repository
+      run: |
+          ls ${{ github.workspace }} -a
+          
+  test1 :
+    needs: build1
+    name: Test Functions
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - uses: actions/setup-node@v3
+    
+    - name: Installing required dependencies
+      run: npm ci
+      
+  test2:
+    needs: build2
+    defaults:
+     run:
+      working-directory: ./server  
+    name: Test socket
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - uses: actions/setup-node@v3
+    
+    - name: Running
+      run: npm ci 
+  
+  Linter:
+      name: Lint
+      needs: [test1, test2]
+      runs-on: ubuntu-latest
+      steps:
+        - uses: actions/checkout@v3
+          with:
+            # Disabling shallow clone is recommended for improving relevancy of reporting
+            fetch-depth: 0
+
+        - name: Lint Code Base
+          uses: github/super-linter@v4
+          env:
+            VALIDATE_ALL_CODEBASE: true
+            DEFAULT_BRANCH: master
+            GITHUB_TOKEN: ${{ secrets.TOKEN }}
+            
+  Static-code-check:
+      name: static-check
+      needs: [test1, test2]
+      runs-on: ubuntu-latest
+      steps:
+        - uses: actions/checkout@v3
+          with:
+            # Disabling shallow clone is recommended for improving relevancy of reporting
+            fetch-depth: 0
+
+        - name: SonarCloud Scan
+          uses: sonarsource/sonarcloud-github-action@master
+          env:
+            GITHUB_TOKEN: ${{ secrets.TOKEN }}
+            SONAR_TOKEN: ${{ secrets.SONAR }} 
+            
+  Docker-Image-frontend:
+      name: Docker build frontend
+      needs: [build1, test1, Linter, Static-code-check]
+      runs-on: ubuntu-latest
+      steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-node@v3
+
+      - name: Installing required dependencies
+        run: npm install
+
+      - name: Making production build
+        run: npm run build
+
+      - name: List files in the repository
+        run: |
+            ls ${{ github.workspace }}
+
+      - name: Build the Docker image
+        run: docker build . --file Dockerfile --tag ${{secrets.Docker_ID}}/devops-web-game
+
+      - name: List files in the repository
+        run: |
+            ls ${{ github.workspace }} -a
+      - run: docker image ls
+
+      - name: Docker Login
+        env: 
+          Docker_ID: ${{secrets.Docker_ID}}
+          Docker_PSWD: ${{secrets.Docker_PSWD}}
+        run: docker login -u $Docker_ID -p $Docker_PSWD
+
+      - name: Docker push
+        run: docker push ${{secrets.Docker_ID}}/devops-web-game
+
+      - run: docker image ls     
+      
+  Docker-Image-backend:
+      needs: [build2, test2, Linter, Static-code-check]
+      runs-on: ubuntu-latest
+      defaults:
+       run:
+        working-directory: ./server
+        
+      steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-node@v3
+
+      - name: List files in the repository
+        run: |
+            ls
+            
+      - name: Build the Docker image
+        run: docker build . --file Dockerfile --tag ${{secrets.Docker_ID}}/devops-web-game-server
+
+      - name: List files in the repository
+        run: |
+            ls ${{ github.workspace }} -a
+      - run: docker image ls
+
+      - name: Docker Login
+        env: 
+          Docker_ID: ${{secrets.Docker_ID}}
+          Docker_PSWD: ${{secrets.Docker_PSWD}}
+        run: docker login -u $Docker_ID -p $Docker_PSWD
+
+      - name: Docker push
+        run: docker push ${{secrets.Docker_ID}}/devops-web-game-server
+      - run: docker image ls   
+      
